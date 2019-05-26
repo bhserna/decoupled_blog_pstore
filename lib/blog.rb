@@ -1,5 +1,6 @@
 require "date"
 require "securerandom"
+require "pstore"
 
 module Blog
   def self.list_posts(store)
@@ -122,39 +123,58 @@ module Blog
   end
 
   class Store
-    attr_reader :all
+    def initialize(posts = [])
+      @db = PStore.new("blog.pstore")
 
-    def initialize(records = [])
-      @all = records
-    end
+      db.transaction do
+        db[:posts] ||= {}
+      end
 
-    def update(id, attrs)
-      @all = all.map do |record|
-        if has_id?(record, id)
-          update_record(record, attrs)
-        else
-          record
+      db.transaction do
+        posts.each do |post|
+          db[:posts][post.id] = post
         end
       end
     end
 
+    def all
+      db.transaction(true) do
+        db[:posts].values
+      end
+    end
+
+    def update(id, attrs)
+      post = find(id)
+      post = update_record(post, attrs)
+
+      db.transaction do
+        db[:posts][post.id] = post
+      end
+    end
+
     def create(attrs)
-      all << Post.new(attrs.merge(id: SecureRandom.uuid))
+      post = Post.new(attrs.merge(id: SecureRandom.uuid))
+
+      db.transaction do
+        db[:posts][post.id] = post
+      end
     end
 
     def destroy(id)
-      @all = all.reject { |record| has_id?(record, id) }
+      db.transaction do
+        db[:posts].delete(id)
+      end
     end
 
     def find(id)
-      all.find { |record| has_id?(record, id) } || :no_record
+      db.transaction do
+        db[:posts][id]
+      end || :no_record
     end
 
     private
 
-    def has_id?(record, id)
-      record.id.to_s == id.to_s
-    end
+    attr_reader :db
 
     def update_record(record, attrs)
       Post.new(record.attributes.merge(attrs))
